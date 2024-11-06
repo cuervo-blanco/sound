@@ -8,4 +8,5 @@ license = "MIT"
 repository = "https://github.com/cuervo-blanco/utilities"
 
 [dependencies]
+clap = {version = "4.5.20", features = ["derive"] }
 hound = "3.5.1"

@@ -1,5 +1,5 @@
-use std::env;
 use std::process;
+use clap::{Arg, Command};
 
 use hound;
 
@@ -11,21 +11,55 @@ fn main() {
     // convolve signal1.wav filter -o 3 -t iir -f 345
     // and also reverbs such as:
     // convolve signal2.wav reverb -ir my_impulse_response.wav -rt 5s
-    let args: Vec<String> = env::args().collect();
-    // add third agument that the user specifies the output name
-    // convolve input1.wav input2.wav --name convolved-signal
-    if args.len() != 3 {
-        eprintln!("Usage: {} input1.wav input2.wav", args[0]);
-        process::exit(1);
-    }
-    let input1_path = &args[1];
-    let input2_path = &args[2];
-    let (signal1, spec1): (Vec<Vec<f32>>, hound::WavSpec) = read_wav_file(input1_path);
-    let (signal2, spec2): (Vec<Vec<f32>>, hound::WavSpec) = read_wav_file(input2_path);
+    //
+    let matches = Command::new("Convolve")
+        .version("0.1.1")
+        .author("cuervo-blanco")
+        .about("Convolves two WAV audio signals")
+        .arg(
+            Arg::new("input1")
+                .help("First input WAV file")
+                .required(true)
+                .index(1),
+        ).arg(
+            Arg::new("input2")
+                .help("Second input WAV file")
+                .required(true)
+                .index(2),
+        ).arg(
+            Arg::new("output")
+                .help("Output WAV file name")
+                .long("name")
+                .short('n')
+                .default_value("output.wav"),
+        ).get_matches();
 
-    if spec1.sample_rate != spec2.sample_rate || spec1.channels != spec2.channels {
-        // Add a conversion from the bottom up (if 48 & 44 => 48)
-        eprintln!("Input WAV files must have the same sample rate and number of channels.");
+    let input1_path = matches.get_one::<String>("input1").unwrap();
+    let input2_path = matches.get_one::<String>("input2").unwrap();
+    let output_path = matches.get_one::<String>("output").unwrap();
+    let (mut signal1, mut spec1): (Vec<Vec<f32>>, hound::WavSpec) = read_wav_file(input1_path);
+    let (mut signal2, mut spec2): (Vec<Vec<f32>>, hound::WavSpec) = read_wav_file(input2_path);
+
+    if spec1.sample_rate != spec2.sample_rate {
+        if spec1.sample_rate < spec2.sample_rate {
+            println!(
+                "Resampling '{}' from {} Hz to {} Hz",
+                input1_path, spec1.sample_rate, spec2.sample_rate
+            );
+            signal1 = resample_signal(&signal1, spec1.sample_rate, spec2.sample_rate);
+            spec1.sample_rate = spec2.sample_rate;
+        } else {
+            println!(
+                "Resampling '{}' from {} Hz to {} Hz",
+                input2_path, spec2.sample_rate, spec1.sample_rate
+            );
+            signal2 = resample_signal(&signal2, spec2.sample_rate, spec1.sample_rate);
+            spec2.sample_rate = spec1.sample_rate;
+        }
+    }
+
+    if spec1.channels != spec2.channels {
+        eprintln!("Input WAV files must have the same number of channels.");
         process::exit(1);
     }
     let num_channels = spec1.channels as usize;
@@ -43,10 +77,39 @@ fn main() {
         bits_per_sample: spec1.bits_per_sample,
         sample_format: spec1.sample_format,
     };
-    write_wav_file("output.wav", &result_per_channel, &output_spec);
+    let output_name = format!("{}.wav", output_path);
+    write_wav_file(&output_name, &result_per_channel, &output_spec);
     // Send to Python or C++ to generate graphs and such (data_analysis)
 }
+fn resample_signal(
+    signal_per_channel: &[Vec<f32>],
+    input_sample_rate: u32,
+    output_sample_rate: u32,
+) -> Vec<Vec<f32>> {
+    let ratio = output_sample_rate as f64 / input_sample_rate as f64;
+    let mut resampled_per_channel = Vec::new();
 
+    for channel_samples in signal_per_channel {
+        let input_len = channel_samples.len();
+        let output_len = ((input_len as f64) * ratio) as usize;
+        let mut resampled = Vec::with_capacity(output_len);
+
+        for i in 0..output_len {
+            let src_pos = i as f64 / ratio;
+            let src_index = src_pos.floor() as usize;
+            let frac = src_pos - src_index as f64;
+
+            let s0 = channel_samples.get(src_index).cloned().unwrap_or(0.0);
+            let s1 = channel_samples.get(src_index + 1).cloned().unwrap_or(0.0);
+            let interpolated = s0 + (s1 - s0) * frac as f32;
+
+            resampled.push(interpolated);
+        }
+        resampled_per_channel.push(resampled);
+    }
+
+    resampled_per_channel
+}
 
 fn read_wav_file(path: &str) -> (Vec<Vec<f32>>, hound::WavSpec) {
     let mut reader = hound::WavReader::open(path).expect("Failed to open WAV file");
