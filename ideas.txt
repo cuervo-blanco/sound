@@ -1,0 +1,7 @@
+- Play: just plays an audio file
+    play my_audio.wav
+    (listens for user input that specifies if audio is to be stopped, paused,
+    skip 15s, returned 15s, volume raise, volume lowered)
+    play my_audio.wav -s 50 (play from 50 seconds forward)
+    play my_other.wav -t 1:23 (go to minute one second twenty three)
+    play hello_world.wav --fade-in 30 (30 seconds fades in)

@@ -1,0 +1,11 @@
+[package]
+name = "convolve"
+version = "0.1.1"
+edition = "2021"
+authors = ["cuervo-blanco"]
+description = "A simple signal convolver"
+license = "MIT"
+repository = "https://github.com/cuervo-blanco/utilities"
+
+[dependencies]
+hound = "3.5.1"
