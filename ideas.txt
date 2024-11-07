@@ -5,3 +5,75 @@
     play my_audio.wav -s 50 (play from 50 seconds forward)
     play my_other.wav -t 1:23 (go to minute one second twenty three)
     play hello_world.wav --fade-in 30 (30 seconds fades in)
+
+- A Cue Player - that performs system stuff as well as playback, meaning like:
+        cue_player start
+        (here it listens to user input)
+        // Wherever it says cue_player it means that the user is in run mode
+        // and cueplayer should listen to the command next to it:
+        // cue_player start
+        // define --cue 20 --stop my_audio_file.wav --fade-out 100ms
+        // the command line should be divided in two halves, the first half
+        // where the user puts their commands and sees previous commands
+        // (regular command line interface)
+        // The second where they see the cue list like:
+        // 23 play my_audio_file.wav
+        // They can also alias their audio files by another name
+        // define --cue 30 --play sweet-kitty-2334_download_xo029.mp3 --name "Sweet Kitty"
+        // 30 play "Sweet Kitty"
+        // If they write a number the cue goes off:
+        // 30
+        // Cue 30 playing...
+        // There should also be another window bellow the cue list that shows
+        // all the cues that are currently playing.
+
+        cue_player define --cue 23 --play my_audio_file.wav --fade-in 500ms --fade-out 300ms
+        channel set  1: left-right (wait for user input)
+        channel set  2: center-surround-left
+        beginning time: 1m2s
+        finish time: 2m2s
+        // perhaps other specifities, but user can quickly save progress and
+        // the program knows sets the remaining settings to default
+        // or user can keep the default setting of a certain parameter and can skip
+        // to the other one
+
+
+        cue_player reset --cue 23 channel
+        channel set 1: (choose other option)
+
+        cue_player show --cue 23
+        (Outputs all settings set in group, with the posibility of expanding on
+        a group of settings)
+        cue_player show --cue 23 --set faders
+
+        // They can also set system stuff
+        cue_player settings
+        (Output will be list of settings they can change)
+        cue_player settings --set-output my_audio_interface
+        (Output may be Success or Failure, if failure show the available outputs)
+        cue_player settings --show-output
+        (Output shows current output card)
+
+        // User can also perform system tasks such as:
+        cue_player define --cue 3 --record my_new_recording_cue3
+
+        // Can import files into the project directory or point to those files
+        cue_player show list
+        (output of current files in the directory being used)
+        cue_player show
+        (will output the project settings)
+        cue_player show --cues
+        (will output cue list and some metadata)
+        cue_player import my_personal_cue_list.qlab
+        (We can import qlab cues and some parameters)
+        cue_player link my_other_cue_list.cp
+        (There can be in future another tool for creating samples, more
+        directed at musicians and designers who need more freedom and are not
+        concerned with specifity. And that other tool communicates with this one
+        through a shared cue_list file that both are modifying. Designer can be
+        in different computer making changes to audio-related stuff from the cue
+        such as effects, fades in, cut points, etc. While this one will have
+        the capabilities to do things with the system such as access the systems
+        io, net and stuff like that that only a systems person knows,
+        it can also provide better documentation at the end of the day.)
+

@@ -1,0 +1,13 @@
+[package]
+name = "cueplayer"
+version = "0.1.0"
+edition = "2021"
+authors = ["cuervo-blanco"]
+description = "A terminal cue player"
+license = "MIT"
+repository = "https://github.com/cuervo-blanco/utilities"
+
+[dependencies]
+rustyline = "14.0.0"
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1.0.132"
