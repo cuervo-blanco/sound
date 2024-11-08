@@ -4,7 +4,7 @@ use rustyline::Editor;
 use serde::{Serialize, Deserialize};
 use std::{
     collections::HashMap,
-    process::{Command, Child},
+    process::Command,
     thread,
     fs::File,
     io::{Write, BufReader},
@@ -32,7 +32,7 @@ enum CueAction {
     },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct CueManager {
     cues: HashMap<u32, Cue>,
 }
@@ -54,17 +54,14 @@ impl CueManager {
     fn get_cue(&self, cue_id: u32) -> Option<&Cue> {
         self.cues.get(&cue_id)
     }
-    fn stop_cue() {
-        // Find cue process and kill it
-    }
 
-    fn save_to_file(&self, path: &str) -> std::io::Result<()> {
+    fn _save_to_file(&self, path: &str) -> std::io::Result<()> {
         let serialized = serde_json::to_string(&self)?;
         let mut file = File::create(path)?;
         file.write_all(serialized.as_bytes())?;
         Ok(())
     }
-    fn load_from_file(path: &str) -> std::io::Result<Self> {
+    fn _load_from_file(path: &str) -> std::io::Result<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let manager = serde_json::from_reader(reader)?;
@@ -74,52 +71,51 @@ impl CueManager {
 
 struct AppState {
     cue_manager: Arc<Mutex<CueManager>>,
-    running_cues: Arc<Mutex<HashMap<u32, Child>>>,
+    running_cues: Arc<Mutex<HashMap<u32, Arc<Mutex<std::process::Child>>>>>,
 }
 
-fn execute_cue(cue:Cue) {
+fn execute_cue_process(cue: Cue, state: &AppState) {
     match cue.actions {
-        CueAction::Play { file, fade_in, fade_out } => {
+        CueAction::Play{ file, fade_in, fade_out } => {
             let mut cmd = Command::new("play");
+            println!("Arrived here: {:?}", cmd);
             cmd.arg(file);
-
             if let Some(fade_in_ms) = fade_in {
                 cmd.arg("--fade-in").arg(format!("{}ms", fade_in_ms));
-            }
+            };
             if let Some(fade_out_ms) = fade_out {
                 cmd.arg("--fade-out").arg(format!("{}ms", fade_out_ms));
-            }
-            if let Err(e) = cmd.spawn() {
-                eprintln!("Failed to execute cue {}: {}", cue.id, e);
-            }
-        },
-    }
-}
+            };
+            match cmd.spawn() {
+                Ok(child) => {
+                    let cue_id = cue.id;
+                    let child_arc = Arc::new(Mutex::new(child));
+                    {
+                        let mut exec_cues = state.running_cues.lock().unwrap();
+                        exec_cues.insert(cue_id, child_arc.clone());
+                    }
+                    println!("Cue {} is playing", cue_id);
 
-fn execute_cue_async(cue: Cue, state: Arc<AppState>) {
-    let cue_id = cue.id;
-
-    let child = thread::spawn(move || {
-        match cue.actions {
-            CueAction::Play { file, fade_in, fade_out } => {
-                let mut cmd = Command::new("play");
-                cmd.arg(file);
-
-                if let Some(fade_in_ms) = fade_in {
-                    cmd.arg("--fade-in").arg(format!("{}ms", fade_in_ms));
-                }
-                if let Some(fade_out_ms) = fade_out {
-                    cmd.arg("--fade-out").arg(format!("{}ms", fade_out_ms));
-                }
-                if let Err(e) = cmd.spawn() {
+                    let exec_cues = Arc::clone(&state.running_cues);
+                    thread::spawn(move || {
+                        {
+                            let mut child = child_arc.lock().unwrap();
+                            let _ = child.wait();
+                        }
+                        let mut exec_cues = exec_cues.lock().unwrap();
+                        exec_cues.remove(&cue_id);
+                        println!("Cue {} has finished", cue_id);
+                     });
+                },
+                Err(e) => {
                     eprintln!("Failed to execute cue {}: {}", cue.id, e);
                 }
-                cmd.spawn()
-            },
-            CueAction::Stop {cue_id, fade_out} => {
-            },
-        }
-    });
+            }
+        },
+        CueAction::Stop{ cue_id: _, fade_out: _ } => {
+            todo!();
+        },
+    }
 }
 
 fn handle_command(command: String, state: &AppState) {
@@ -127,31 +123,58 @@ fn handle_command(command: String, state: &AppState) {
     if parts.is_empty() {
         return;
     }
-    let mut cue_manager = state.cue_manager.lock().expect("Failed to acquire lock for Cue Manager");
     match parts[0] {
         "define" => {
+            let mut cue_manager = state.cue_manager.lock().expect("Failed to acquire lock for Cue Manager");
             handle_define_command(&parts, &mut cue_manager);
         },
+        "show" => {
+            let cue_manager = state.cue_manager.lock().expect("Failed to acquire lock for Cue Manager");
+            let cue_list = cue_manager.cues.clone();
+            println!("{:?}", cue_list);
+
+        }
         "remove" => {
-            let cue_id = parts[1].parse::<u32>().unwrap();
-            cue_manager.remove_cue(cue_id);
+            if parts.len() < 2 {
+                println!("Usage: remove <cue_id>");
+            } else if let Ok(cue_id) = parts[1].parse::<u32>() {
+                let mut cue_manager = state.cue_manager.lock().expect("Failed to acquire lock for Cue Manager");
+                cue_manager.remove_cue(cue_id);
+            } else {
+                println!("Invalid cue ID");
+            }
         },
         "go" => {
+            println!("going!");
+            handle_go_command(&state);
         },
         "goto" => {
+            if parts.len() < 2 {
+                println!("Usage: goto <cue_id>");
+            } else if let Ok(cue_id) = parts[1].parse::<u32>() {
+                handle_goto_command(cue_id, &state);
+            } else {
+                println!("Invalid cue ID");
+            }
         },
         "stop" => {
-            let cue_id = parts[1].parse::<u32>().unwrap();
+            if parts.len() < 2 {
+                println!("Usage: stop <cue_id>");
+            } else if let Ok(cue_id) = parts[1].parse::<u32>() {
+                handle_stop_cue(cue_id, &state);
+            } else {
+                println!("Invalid cue ID");
+            }
         },
         "exit" | "quit" => {
             std::process::exit(0);
         },
         _ => {
             if let Ok(cue_id) = parts[0].parse::<u32>() {
-                ///
+                handle_goto_command(cue_id, &state);
             } else {
-                ///
-            } println!("Unknown command: {}", parts[0]);
+             println!("Unknown command: {}", parts[0]);
+            }
         }
     }
 }
@@ -166,13 +189,13 @@ fn handle_define_command(args: &[&str], cue_manager: &mut CueManager) {
     }
     while i < args.len() {
         match args[i] {
-            "--cue" => {
+            "cue" => {
                 i+=1;
                 if i < args.len() {
                     cue_id = args[i].parse::<u32>().ok();
                 }
             },
-            "--play" => {
+            "play" => {
                 i+=1;
                 if i < args.len() {
                     let file = args[i].to_string();
@@ -192,29 +215,54 @@ fn handle_define_command(args: &[&str], cue_manager: &mut CueManager) {
     }
 }
 
-fn handle_go_command(cue_manager: &CueManager) {
+fn handle_go_command(state: &AppState) {
+    let cue_manager = state.cue_manager.lock().unwrap();
+    println!("Successful lock of cue_manager: {:?}", cue_manager);
     let mut cue_ids: Vec<u32> = cue_manager.cues.keys().cloned().collect();
+    println!("Cue ids: {:?}", cue_ids);
     cue_ids.sort();
-
+    println!("Cue ids sort: {:?}", cue_ids);
     for cue_id in cue_ids {
+        println!("Starting cue {}", cue_id);
         if let Some(cue) = cue_manager.get_cue(cue_id) {
-            execute_cue_async(cue.clone());
+            execute_cue_process(cue.clone(), state);
         }
     }
 }
 
-fn handle_goto_command(cue_id: u32, cue_manager: &CueManager) {
+fn handle_goto_command(cue_id: u32, state: &AppState) {
+    let cue_manager = state.cue_manager.lock().unwrap();
     if let Some(cue) = cue_manager.get_cue(cue_id) {
-        execute_cue_async(cue.clone());
+        execute_cue_process(cue.clone(), state);
     } else {
         println!("Cue {} not found", cue_id);
     }
+}
+
+fn handle_stop_cue(cue_id: u32, state: &AppState) {
+    let mut exec_cues = state.running_cues.lock().unwrap();
+    if let Some(child_arc) = exec_cues.clone().get(&cue_id) {
+        let mut child = child_arc.lock().unwrap();
+        match child.kill() {
+            Ok(_) => {
+                println!("Cue {} stopped", cue_id);
+                exec_cues.remove(&cue_id);
+            },
+            Err(e) => {
+                eprintln!("Failed to stop cue {}: {}", cue_id, e);
+            }
+        }
+    } else {
+        println!("Cue {} is not currently playing", cue_id);
+    }
+
 }
 
 
 fn main() -> rustyline::Result<()> {
     let state = AppState {
         cue_manager: Arc::new(Mutex::new(CueManager::new())),
+        running_cues: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let mut rl = Editor::<(), FileHistory>::new()?;
@@ -223,7 +271,7 @@ fn main() -> rustyline::Result<()> {
         let readline = rl.readline(">> ");
         match readline {
             Ok(line) => {
-                rl.add_history_entry(line.as_str());
+                let _ = rl.add_history_entry(line.as_str());
                 handle_command(line, &state);
             }
             Err(ReadlineError::Interrupted) => {
